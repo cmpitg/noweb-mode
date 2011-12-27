@@ -6,6 +6,7 @@
 ;;                         and A.J. Rossini <rossini@biostat.washington.edu>
 ;; Copyright (C) 1999--2004 A.J. Rossini, Rich M. Heiberger, Martin
 ;;	Maechler, Kurt Hornik, Rodney Sparapani, and Stephen Eglen.
+;; Copyright (C) 2011 by Dương "Yang" ヤン Nguyễn <cmpitg@gmail.com>
 
 ;; ESS-related Changes first added by Mark Lunt and A.J. Rossini, March, 1999.
 
@@ -40,6 +41,8 @@
 ;;                            auto-mode-alist))
 
 ;; NEWS:
+;;
+;;   * 2011/12/28: Initially support shebang (#!) code-mode detection.
 ;;
 ;;   * [tho] M-n q, aka: M-x noweb-fill-chunk
 ;;
@@ -593,42 +596,90 @@ otherwise."
   (let (beg end mode)
     (save-excursion
       (beginning-of-line 1)
-      (and (progn
-	     (ess-write-to-dribble-buffer
-	      (format "(n-i-m-l: 1)"))
-	     (search-forward "-*-"
-			     (save-excursion (end-of-line) (point))
-			     t))
-	   (progn
-	     (ess-write-to-dribble-buffer
-	      (format "(n-i-m-l: 2)"))
-             (skip-chars-forward " \t")
-             (setq beg (point))
-             (search-forward "-*-"
+      (or (and
+           ;; cmpitg's
+           ;; Determine the shebang (aka #!) line,
+
+           (progn
+             (ess-write-to-dribble-buffer
+              (format "(n-i-m-l: '1) shebang!\n"))
+
+             (search-forward "#!"
                              (save-excursion (end-of-line) (point))
                              t))
+
            (progn
-	     (ess-write-to-dribble-buffer
-	      (format "(n-i-m-l: 3)"))
-             (forward-char -3)
-             (skip-chars-backward " \t")
-             (setq end (point))
-             (goto-char beg)
-             (setq mode (concat
-                         (downcase (buffer-substring beg end))
-                         "-mode"))
-             (if (and (>= (length mode) 11))
-                      (progn
-                        (if
-                            (equal (substring mode -10 -5) "-mode")
-                            (setq mode (substring mode 0 -5)))
-                        (if
-                            (equal (substring mode 0 5) "mode:")
-                            (setq mode (substring mode 6))))))
-	   (progn
-	     (ess-write-to-dribble-buffer
-	      (format "(n-i-m-l: 3) mode=%s" mode))
-	     (intern mode))))))
+             (ess-write-to-dribble-buffer
+              (format "(n-i-m-l: '2)\n"))
+
+             (setq mode
+                   (cond ((search-forward "newlisp"
+                                          (save-excursion (end-of-line) (point))
+                                          t)
+                          "newlisp-mode")
+                         ((search-forward "sh"
+                                          (save-excursion (end-of-line) (point))
+                                          t)
+                          "sh-mode")
+                         ((search-forward "python"
+                                          (save-excursion (end-of-line) (point))
+                                          t)
+                          "python-mode")
+                         ((search-forward "ruby"
+                                          (save-excursion (end-of-line) (point))
+                                          t)
+                          "ruby-mode")
+                         (t nil)))
+             (ess-write-to-dribble-buffer
+              (format "Found: mode=%s\n" mode))
+             mode)
+
+           (progn
+             (ess-write-to-dribble-buffer
+              (format "(n-i-m-l: '3) mode=%s\n%s\n" mode
+                      (intern mode)))
+             (intern mode)))
+
+          ;; Or use the standard method
+          (and (progn
+                 (ess-write-to-dribble-buffer
+                  (format "(n-i-m-l: 1)"))
+
+                 (search-forward "-*-"
+                                 (save-excursion (end-of-line) (point))
+                                 t))
+
+               (progn
+                 (ess-write-to-dribble-buffer
+                  (format "(n-i-m-l: 2)"))
+                 (skip-chars-forward " \t")
+                 (setq beg (point))
+                 (search-forward "-*-"
+                                 (save-excursion (end-of-line) (point))
+                                 t))
+
+               (progn
+                 (ess-write-to-dribble-buffer
+                  (format "(n-i-m-l: 3)"))
+                 (forward-char -3)
+                 (skip-chars-backward " \t")
+                 (setq end (point))
+                 (goto-char beg)
+                 (setq mode (concat
+                             (downcase (buffer-substring beg end))
+                             "-mode"))
+                 (if (and (>= (length mode) 11))
+                     (progn
+                       (if
+                         (equal (substring mode -10 -5) "-mode")
+                         (setq mode (substring mode 0 -5)))
+                       (if
+                         (equal (substring mode 0 5) "mode:")
+                         (setq mode (substring mode 6))))))
+               (progn
+                 (ess-write-to-dribble-buffer
+                  (format "(n-i-m-l: 3) mode=%s\n" mode))
+                 (intern mode)))))))
 
 (defun noweb-find-chunk-index-buffer ()
   "Return the index of the current chunk in NOWEB-CHUNK-VECTOR."
@@ -1214,20 +1265,28 @@ in the middle and and update the chunk vector."
       (progn
         ;; Reset code-mode to default and then check for a mode comment.
         (setq noweb-code-mode noweb-default-code-mode)
+
         (let (mode chunk-name)
-	  (save-excursion
-	    (save-restriction
+          (save-excursion
+            (save-restriction
+
+              ;; Return to the beginning of the code chunk
               (end-of-line)
               (re-search-backward "^[ \t]*<<\\(.*\\)>>=" nil t)
+
+              ;; Get the chunk-name
               (setq chunk-name (match-string 1))
+
+              ;; Search for the standard Emacs mode-line
               (widen)
               (goto-char (point-min))
               (re-search-forward (concat "^<<" (regexp-quote chunk-name) ">>=") nil t)
               (beginning-of-line 2)
               (setq mode (noweb-in-mode-line))
+
               (if (functionp mode)
                   (setq noweb-code-mode mode))))))
-    (error "This only makes sense in a code chunk")))
+      (error "This only makes sense in a code chunk")))
 
 (defun noweb-set-doc-syntax-table ()
   "Sets the doc-mode syntax-table to treat code quotes as comments."
